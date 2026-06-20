@@ -11,6 +11,9 @@ Client side router using the History API.
 **Usage:**
 ```typescript
 import { Router } from './router';
+// or
+// import { Router, Store, createComponent, h, html } from 'tavascript';
+// would need package.json // TODO
 
 const app = new Router('root-element-id');
 app.add('/', () => {
