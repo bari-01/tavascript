@@ -1,0 +1,180 @@
+/**
+ * RouteHandler is a function that takes a context and returns an HTMLElement.
+ *
+ * @param context context for navigation and parameters
+ * @returns {HTMLElement} The root element of the rendered component
+ */
+export type RouteHandler = (context: { navigate: (path: string) => void, params: Record<string, string> }) => HTMLElement;
+
+/**
+ * ComponentWithCleanup extends an HTMLElement to include an optional
+ * `_cleanup` method that is invoked when the component is removed
+ * from the DOM by the Router.
+ */
+export interface ComponentWithCleanup extends HTMLElement {
+    _cleanup?: () => void;
+}
+
+interface Route {
+    path: string; // e.g., '/blog/:slug'
+    handler: RouteHandler;
+}
+
+/**
+ * Supports exact matches, parameterized routes (e.g. `/user/:id`), and catch-all routes (`*`).
+ */
+export class Router {
+    private routes: Route[] = [];
+    private root: HTMLElement;
+    private currentCleanup: (() => void) | null = null;
+
+    /**
+     * @param rootId The HTML ID of the root container element.
+     */
+    constructor(rootId: string) {
+        const el = document.getElementById(rootId);
+        if (!el) throw new Error(`Root element #${rootId} not found`);
+        this.root = el;
+
+        // Listen for browser forward/back buttons and hash changes
+        window.addEventListener('hashchange', () => this.resolve());
+        window.addEventListener('popstate', () => this.resolve());
+
+        // Intercept clicks on local anchor tags to use hash routing
+        document.addEventListener('click', (e) => {
+            if (e.defaultPrevented) return;
+            const target = (e.target as HTMLElement).closest('a');
+            if (target && !target.hasAttribute('download') && target.target !== '_blank') {
+                const href = target.getAttribute('href');
+                if (href && (href.startsWith('#') || href.startsWith('/'))) {
+                    e.preventDefault();
+                    this.navigate(href);
+                }
+            }
+        });
+    }
+
+    /**
+     * Normalizes a route or URL path into a standard internal path format (e.g. '/about')
+     */
+    private normalize(path: string): string {
+        if (!path || path === '*') return path;
+        const cleaned = path.replace(/^#/, '');
+        if (!cleaned || cleaned === '/') return '/';
+        return cleaned.startsWith('/') ? cleaned : '/' + cleaned;
+    }
+
+    /**
+     * Reads the current route from window.location.hash (fallback to '/')
+     */
+    private getCurrentPath(): string {
+        return this.normalize(window.location.hash);
+    }
+
+    /**
+     * Register a new route.
+     * @param path Path template (e.g., '/home', '#/home', '/post/:id', or '*')
+     * @param handler Function returning the component to render
+     */
+    add(path: string, handler: RouteHandler) {
+        this.routes.push({ path: this.normalize(path), handler });
+    }
+
+    /**
+     * Programmatically navigate to a different path
+     * @param path The route path or hash to navigate to (e.g. '/about' or '#/about')
+     */
+    navigate(path: string) {
+        const targetRoute = this.normalize(path);
+        const targetHash = '#' + targetRoute;
+
+        // Prevent duplicate history push if already on the same hash route
+        if (this.getCurrentPath() === targetRoute && window.location.hash === targetHash) {
+            return;
+        }
+
+        // Save the scroll position of the current page before leaving it
+        window.history.replaceState({ scrollY: window.scrollY }, '');
+
+        if (window.location.hash !== targetHash) {
+            window.location.hash = targetHash;
+        } else {
+            this.resolve();
+        }
+    }
+
+    /**
+     * Finds a matching route for the given URL path
+     * @param urlPath The normalized route path (e.g. '/events/123')
+     */
+    private match(urlPath: string): { handler: RouteHandler, params: Record<string, string> } | null {
+        for (const route of this.routes) {
+            const routeParts = route.path.split('/').filter(Boolean);
+            const urlParts = urlPath.split('/').filter(Boolean);
+
+            if (routeParts.length !== urlParts.length && route.path !== '*') continue;
+
+            // Handle catch-all routes
+            if (route.path === '*') return { handler: route.handler, params: {} };
+
+            const params: Record<string, string> = {};
+            let match = true;
+
+            for (let i = 0; i < routeParts.length; i++) {
+                if (routeParts[i].startsWith(':')) {
+                    params[routeParts[i].substring(1)] = urlParts[i];
+                } else if (routeParts[i] !== urlParts[i]) {
+                    match = false;
+                    break;
+                }
+            }
+
+            if (match) return { handler: route.handler, params };
+        }
+        return null;
+    }
+
+    /**
+     * Resolves the current hash route against registered routes
+     * and mounts the corresponding component in the root element.
+     */
+    resolve() {
+        const path = this.getCurrentPath();
+
+        // Clean up previous page component if applicable
+        if (this.currentCleanup) {
+            this.currentCleanup();
+            this.currentCleanup = null;
+        }
+        this.root.innerHTML = '';
+
+        const match = this.match(path);
+        if (match) {
+            const component = match.handler({ navigate: (p) => this.navigate(p), params: match.params });
+            this.root.appendChild(component);
+
+            // Attach cleanup function if the component has one
+            const componentWithCleanup = component as ComponentWithCleanup;
+            if (componentWithCleanup._cleanup) {
+                this.currentCleanup = componentWithCleanup._cleanup;
+            }
+        } else {
+            // Fallback to catch-all route if registered
+            const catchAll = this.routes.find(r => r.path === '*');
+            if (catchAll) {
+                const component = catchAll.handler({ navigate: (p) => this.navigate(p), params: {} });
+                this.root.appendChild(component);
+            } else {
+                this.root.innerHTML = '<h1>404 - Not Found</h1>';
+            }
+        }
+
+        // Restore scroll position if navigating back/forward, otherwise go to top
+        const state = window.history.state;
+        if (state && typeof state.scrollY === 'number') {
+            window.scrollTo(0, state.scrollY);
+        } else {
+            window.scrollTo(0, 0);
+        }
+    }
+}
