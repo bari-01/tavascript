@@ -25,15 +25,28 @@ export class Store<T> {
      * Notifies all subscribers immediately after updating.
      * @param nextState New state or an updater function
      */
+    //set(nextState: T | ((curr: T) => T)) {
+    //    if (typeof nextState === 'function') {
+    //        // @ts-ignore
+    //        this.state = nextState(this.state);
+    //    } else {
+    //        this.state = nextState;
+    //    }
+    //    this.notify();
+    //}
     set(nextState: T | ((curr: T) => T)) {
-        if (typeof nextState === 'function') {
-            // @ts-ignore
-            this.state = nextState(this.state);
-        } else {
-            this.state = nextState;
-        }
-        this.notify();
+    const next =
+        typeof nextState === 'function'
+            ? (nextState as (curr: T) => T)(this.state)
+            : nextState;
+
+    if (Object.is(next, this.state)) {
+        return;
     }
+
+    this.state = next;
+    this.notify();
+}
 
     /**
      * Subscribe to state changes. The listener is called immediately with the current state.

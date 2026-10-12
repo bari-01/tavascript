@@ -29,6 +29,16 @@ export function h<K extends keyof HTMLElementTagNameMap>(
             else if (key === 'style' && typeof value === 'object') {
                 Object.assign(el.style, value);
             } 
+            // Handle boolean attributes (disabled, checked, selected, readonly, etc.)
+            else if (typeof value === 'boolean') {
+                if (value) {
+                    el.setAttribute(key, '');
+                    (el as any)[key] = true;
+                } else {
+                    el.removeAttribute(key);
+                    (el as any)[key] = false;
+                }
+            }
             // Handle generic attributes safely
             else if (value !== null && value !== undefined) {
                 el.setAttribute(key, String(value));

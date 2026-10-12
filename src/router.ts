@@ -36,44 +36,76 @@ export class Router {
         if (!el) throw new Error(`Root element #${rootId} not found`);
         this.root = el;
 
-        // Listen for browser forward/back buttons
+        // Listen for browser forward/back buttons and hash changes
+        window.addEventListener('hashchange', () => this.resolve());
         window.addEventListener('popstate', () => this.resolve());
 
-        // Intercept clicks on local anchor tags to use pushState
+        // Intercept clicks on local anchor tags to use hash routing
         document.addEventListener('click', (e) => {
+            if (e.defaultPrevented) return;
             const target = (e.target as HTMLElement).closest('a');
-            if (target && target.href.startsWith(window.location.origin) && !target.hasAttribute('download') && target.target !== '_blank') {
-                e.preventDefault();
-                this.navigate(target.getAttribute('href')!);
+            if (target && !target.hasAttribute('download') && target.target !== '_blank') {
+                const href = target.getAttribute('href');
+                if (href && (href.startsWith('#') || href.startsWith('/'))) {
+                    e.preventDefault();
+                    this.navigate(href);
+                }
             }
         });
     }
 
     /**
+     * Normalizes a route or URL path into a standard internal path format (e.g. '/about')
+     */
+    private normalize(path: string): string {
+        if (!path || path === '*') return path;
+        const cleaned = path.replace(/^#/, '');
+        if (!cleaned || cleaned === '/') return '/';
+        return cleaned.startsWith('/') ? cleaned : '/' + cleaned;
+    }
+
+    /**
+     * Reads the current route from window.location.hash (fallback to '/')
+     */
+    private getCurrentPath(): string {
+        return this.normalize(window.location.hash);
+    }
+
+    /**
      * Register a new route.
-     * @param path Path template (e.g., '/home', '/post/:id', or '*')
+     * @param path Path template (e.g., '/home', '#/home', '/post/:id', or '*')
      * @param handler Function returning the component to render
      */
     add(path: string, handler: RouteHandler) {
-        this.routes.push({ path, handler });
+        this.routes.push({ path: this.normalize(path), handler });
     }
 
     /**
      * Programmatically navigate to a different path
-     * @param path The URL path to navigate to
+     * @param path The route path or hash to navigate to (e.g. '/about' or '#/about')
      */
     navigate(path: string) {
+        const targetRoute = this.normalize(path);
+        const targetHash = '#' + targetRoute;
+
+        // Prevent duplicate history push if already on the same hash route
+        if (this.getCurrentPath() === targetRoute && window.location.hash === targetHash) {
+            return;
+        }
+
         // Save the scroll position of the current page before leaving it
         window.history.replaceState({ scrollY: window.scrollY }, '');
-        
-         window.history.pushState(null, '', path);
-         this.resolve();
-     }
 
+        if (window.location.hash !== targetHash) {
+            window.location.hash = targetHash;
+        } else {
+            this.resolve();
+        }
+    }
 
     /**
      * Finds a matching route for the given URL path
-     * @param urlPath The current URL pathname
+     * @param urlPath The normalized route path (e.g. '/events/123')
      */
     private match(urlPath: string): { handler: RouteHandler, params: Record<string, string> } | null {
         for (const route of this.routes) {
@@ -81,7 +113,7 @@ export class Router {
             const urlParts = urlPath.split('/').filter(Boolean);
 
             if (routeParts.length !== urlParts.length && route.path !== '*') continue;
-            
+
             // Handle catch-all routes
             if (route.path === '*') return { handler: route.handler, params: {} };
 
@@ -99,15 +131,15 @@ export class Router {
 
             if (match) return { handler: route.handler, params };
         }
-        return null; // Fallback handled in resolve
+        return null;
     }
 
     /**
-     * Resolves the current URL path against registered routes
+     * Resolves the current hash route against registered routes
      * and mounts the corresponding component in the root element.
      */
     resolve() {
-        const path = window.location.pathname;
+        const path = this.getCurrentPath();
 
         // Clean up previous page component if applicable
         if (this.currentCleanup) {
@@ -120,14 +152,14 @@ export class Router {
         if (match) {
             const component = match.handler({ navigate: (p) => this.navigate(p), params: match.params });
             this.root.appendChild(component);
-            
+
             // Attach cleanup function if the component has one
             const componentWithCleanup = component as ComponentWithCleanup;
             if (componentWithCleanup._cleanup) {
                 this.currentCleanup = componentWithCleanup._cleanup;
             }
         } else {
-            // Fallback to strict match or 404 (handled by caller typically adding a catch-all)
+            // Fallback to catch-all route if registered
             const catchAll = this.routes.find(r => r.path === '*');
             if (catchAll) {
                 const component = catchAll.handler({ navigate: (p) => this.navigate(p), params: {} });
@@ -137,8 +169,6 @@ export class Router {
             }
         }
 
-//        // Scroll to top on new navigation
-//        window.scrollTo(0, 0);
         // Restore scroll position if navigating back/forward, otherwise go to top
         const state = window.history.state;
         if (state && typeof state.scrollY === 'number') {
@@ -146,6 +176,5 @@ export class Router {
         } else {
             window.scrollTo(0, 0);
         }
-
     }
 }
